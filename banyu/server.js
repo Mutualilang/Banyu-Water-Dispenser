@@ -29,16 +29,17 @@ const ADMIN_KEYWORDS = (process.env.ADMIN_KEYWORDS || 'banyuadmin').split(',').m
 const sha = x => crypto.createHash('sha256').update(String(x)).digest();
 const KEYWORD_HASHES = ADMIN_KEYWORDS.map(sha);
 const keywordOk = k => KEYWORD_HASHES.map(h => crypto.timingSafeEqual(h, sha(k))).some(Boolean);   // constant-time compare
-const SESSION_MS = 12 * 3600 * 1000, sessions = new Map();   // token -> expiry. In memory: a server restart logs everyone out.
+const SESSION_MS = 12 * 3600 * 1000;
+const SECRET = process.env.SESSION_SECRET || sha('banyu-session|' + ADMIN_KEYWORDS.join('|')).toString('hex');
+const sign = exp => exp + '.' + crypto.createHmac('sha256', SECRET).update(String(exp)).digest('hex');
 const failed = new Map();                                     // ip -> { n, until }: slows down keyword guessing
 function cookies(req) { const o = {}; (req.headers.cookie || '').split(';').forEach(c => { const i = c.indexOf('='); if (i > 0) o[c.slice(0, i).trim()] = c.slice(i + 1).trim(); }); return o; }
 function isAdmin(req) {
-  const t = cookies(req).banyu_session, exp = t && sessions.get(t);
-  if (!exp) return false;
-  if (exp < Date.now()) { sessions.delete(t); return false; }
-  return true;
+  const t = cookies(req).banyu_session || '', i = t.indexOf('.');
+  if (i < 1 || !(+t.slice(0, i) > Date.now())) return false;
+  const good = sign(+t.slice(0, i));
+  return t.length === good.length && crypto.timingSafeEqual(Buffer.from(t), Buffer.from(good));
 }
-setInterval(() => { const t = Date.now(); sessions.forEach((e, k) => { if (e < t) sessions.delete(k); }); }, 600000);
 
 // ===== XENDIT (QRIS). Test keys start with xnd_development_, live keys with xnd_production_ =====
 const XKEY = CONFIG.XENDIT_SECRET_KEY, HAS_KEY = /^xnd_(development|production)_/.test(XKEY);
@@ -270,14 +271,14 @@ http.createServer(async (req, res) => {
     if (f.until > Date.now()) return send(res, 429, { error: 'Too many wrong tries. Wait a minute.' });
     const b = await readBody(req);
     if (typeof b.keyword === 'string' && keywordOk(b.keyword.trim())) {
-      failed.delete(ip); const t = crypto.randomBytes(32).toString('hex'); sessions.set(t, Date.now() + SESSION_MS);
-      res.setHeader('Set-Cookie', `banyu_session=${t}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_MS / 1000}`);   // add "; Secure" once this is served over HTTPS
+      failed.delete(ip); const t = sign(Date.now() + SESSION_MS);
+      res.setHeader('Set-Cookie', `banyu_session=${t}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${SESSION_MS / 1000}` + (req.headers['x-forwarded-proto'] === 'https' ? '; Secure' : ''));
       return send(res, 200, { ok: true });
     }
     f.n++; if (f.n >= 5) { f.until = Date.now() + 60000; f.n = 0; } failed.set(ip, f);
     return send(res, 401, { error: 'That keyword is not accepted.' });
   }
-  if (p === '/api/logout' && m === 'POST') { const t = cookies(req).banyu_session; if (t) sessions.delete(t); res.setHeader('Set-Cookie', 'banyu_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0'); return send(res, 200, { ok: true }); }
+  if (p === '/api/logout' && m === 'POST') { res.setHeader('Set-Cookie', 'banyu_session=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0'); return send(res, 200, { ok: true }); }
   if (p === '/api/me' && m === 'GET') return send(res, isAdmin(req) ? 200 : 401, { admin: isAdmin(req) });
   if (p.startsWith('/api/') && !kioskOpen && !isAdmin(req)) return send(res, 401, { error: 'login required' });
   if (p === '/dashboard.html' && !isAdmin(req)) { res.writeHead(302, { Location: '/login.html' }); return res.end(); }
