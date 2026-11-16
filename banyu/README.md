@@ -1,6 +1,6 @@
 # Banyu local kiosk + dashboard
 
-No hosting, no domain, no npm install. You only need Node 18+ (https://nodejs.org) on one always-on device
+This part runs on a computer next to the machine, NOT on Vercel (Vercel only hosts the online copy, see SETUP-ONLINE.md). No npm install. You only need Node 18+ (https://nodejs.org) on one always-on device
 that shares the Wi-Fi with the tablet (an old laptop or mini PC works).
 
 ## Run
@@ -17,29 +17,31 @@ The kiosk still simulates payment and pouring itself, but reports every step to 
 awaiting_payment -> paid -> dispensing -> completed / stopped (with ml poured), plus expired / cancelled.
 The water-shortage button posts to /api/alerts. "Paid, no water" = paid but never started (refund candidate).
 
-## Xendit (QRIS) - test mode
-1. In the Xendit dashboard switch to TEST mode, Settings > API Keys, create a SECRET key with Money-In = WRITE.
-   It starts with xnd_development_  (the "public" key xnd_public_... is not used here).
-2. Open settings.env (same folder as server.js) in Notepad, paste the key after XENDIT_SECRET_KEY= , save.
-   (No quotes, no spaces. Never share this file.)
-3. Stop the server (Ctrl+C) and run it again: node server.js
-   The first lines it prints MUST say "PAYMENT: Xendit TEST ...". If they say "DEMO MODE", the key was not found and
-   the kiosk will show the demo payment page; the message tells you why. The dashboard also shows a yellow banner.
-4. On the payment screen, "(Demo) Tandai pembayaran berhasil" asks Xendit to simulate a customer paying.
-   With a live key (xnd_production_...) that button disappears and only real payments count.
+## Midtrans (payments) - sandbox first
+1. In the Midtrans dashboard switch to **Sandbox**, generate a **Server Key** with: Snap Checkout = Write, Core API = Read,
+   Expire transaction = Write, everything else None.
+2. Copy `settings.env.example` to `settings.env` (if you do not have one yet), paste the key after `MIDTRANS_SERVER_KEY=`,
+   keep `MIDTRANS_ENV=sandbox`. No quotes, no spaces. Never share this file; it is in .gitignore so git will not upload it.
+3. Restart: Ctrl+C, then `node server.js`. The first lines MUST say "PAYMENT: Midtrans SANDBOX". "DEMO MODE" means the key was
+   not found, and the line says why.
 
-Payment flow (PAYMENT_FLOW, default "invoice"): after choosing volume + temperature the tablet is sent to XENDIT'S OWN
-payment page, pays there (in test mode Xendit lets you simulate the payment), and is sent back to the kiosk, which
-resumes at the "Pengisian" screen. Set PAYMENT_FLOW=qr to show a QR on the kiosk instead.
-XENDIT_PAYMENT_METHODS (settings.env) defaults to QRIS only. Use ALL to offer everything enabled on your account.
-The return address is this server's own address as the tablet opened it (e.g. http://192.168.1.20:3000).
-If Xendit refuses that address, the server retries without redirects; the payment still works and is recorded,
-but the tablet then stays on Xendit's page and must be returned to the kiosk by hand.
+Flow: after choosing volume + temperature the tablet goes to Midtrans's payment page (Snap), the customer pays, and Midtrans sends
+the tablet back to the kiosk, which continues at the "Pengisian" screen. The server asks Midtrans every 2s whether the order is
+paid, so no public notification URL is needed. Unpaid after ~5 minutes = expired, and the server also expires it at Midtrans so it
+cannot be paid any more. Cancelling on the kiosk does the same. A payment that still lands after that is flagged "late payment"
+(refund candidate) on the dashboard and in Discord.
 
-(QR flow) the server creates the QR with our order number + metadata, then asks Xendit every 2s if it was paid.
-No public URL or callback needed. A payment that arrives after the QR expired is flagged "Paid, no water" (refund candidate).
-Only tested against a stand-in that follows Xendit's docs, not the real Xendit yet: check the first real test run.
-If the console prints "[xendit create] ..." the message after it says what Xendit objected to.
+Paying in sandbox: pick QRIS or GoPay on the Midtrans page, then complete the payment with Midtrans's sandbox payment simulator
+(see "Testing payments on sandbox" in the Midtrans docs). No real money moves.
+Going live later: production key + `MIDTRANS_ENV=production`, after Midtrans has verified the business. Test one small real payment.
+`MIDTRANS_PAYMENTS` limits the methods offered (e.g. `other_qris,gopay`); empty = all enabled on the account.
+
+## Online copy (dashboard on the website + Discord alerts)
+This computer stays in charge. With `CLOUD_URL` and `SYNC_SECRET` set in settings.env it also sends every order and alert change
+to the website (every 5s, retried until it gets through) plus a heartbeat every minute. If the internet drops, sales keep working
+and the copy catches up afterwards. The online dashboard is read-only for machine settings (cold controls, sample data).
+Setting up the website side: see SETUP-ONLINE.md in the repository root.
+The local dashboard's top line shows "Cloud copy: up to date / N waiting / failing (reason)".
 
 ## Dispenser (ESP32, from API.md)
 - Set ESP32_BASE_URL in settings.env (e.g. http://192.168.31.171). Empty = demo: the tablet fakes the pour.
@@ -85,4 +87,4 @@ and the level recovers at `COLD_RECOVER_ML_MIN` (default 22 ml/min). It is recom
 - Only cold sales that have started pouring count; a cold order that is paid but not started yet is not subtracted.
 
 ## Not built yet
-Receipts/refund tooling, live-key hardening, hosting, real admin accounts and the member system.
+Receipts/refund tooling, real admin accounts and the member system.

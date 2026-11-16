@@ -940,8 +940,8 @@
   }
   checkCold(); setInterval(checkCold, 10000);
   fetch("/api/config").then(function(r){return r.json();}).then(function(c){
-    CFG = c; if (c.payment==="mock") document.getElementById("simPay").textContent = "(DEMO \u2013 Xendit belum terhubung) Tandai pembayaran berhasil";
-    if (c.payment==="xendit" && !c.testMode) document.getElementById("simPay").style.display="none";
+    CFG = c; if (c.payment==="mock") document.getElementById("simPay").textContent = "(DEMO \u2013 Midtrans belum terhubung) Tandai pembayaran berhasil";
+    else document.getElementById("simPay").style.display="none";   // real payments: only Midtrans can mark an order paid
   }).catch(function(){});
   function drawRealQR(text){
     var q = qrcode(0,"M"); q.addData(text); q.make();
@@ -950,7 +950,7 @@
     c.width = c.height = size; ctx.fillStyle="#fff"; ctx.fillRect(0,0,size,size); ctx.fillStyle="#000";
     for (var r=0;r<n;r++) for (var k=0;k<n;k++) if (q.isDark(r,k)) ctx.fillRect((k+4)*m,(r+4)*m,m,m);
   }
-  // ---- Xendit hosted checkout: leave for Xendit's payment page, come back to /?order=ID ----
+  // ---- Midtrans Snap checkout: leave for Midtrans's payment page, come back to /?order=ID ----
   function overlay(msg, sub){
     var d = document.getElementById("xovl");
     if (!d){ d = document.createElement("div"); d.id = "xovl";
@@ -961,17 +961,18 @@
   }
   function hideOverlay(){ var d = document.getElementById("xovl"); if (d) d.style.display = "none"; }
   function startInvoiceCheckout(){
-    overlay("Mengalihkan ke halaman pembayaran\u2026", "Selesaikan pembayaran di halaman Xendit, lalu Anda akan kembali ke sini.");
+    overlay("Mengalihkan ke halaman pembayaran\u2026", "Selesaikan pembayaran di halaman Midtrans, lalu Anda akan kembali ke sini.");
     post("/api/orders",{kioskId:KIOSK_ID,volume:state.volume,temp:state.temp}).then(function(r){
       if (!r.ok) throw {status:r.status}; return r.json();
-    }).then(function(o){ if (!o.invoice_url) throw 0; location.href = o.invoice_url; })
+    }).then(function(o){ var u = o.payment_url || o.invoice_url; if (!u) throw 0; location.href = u; })
     .catch(function(e){ hideOverlay(); showToast(e && e.status===503 ? "Mohon maaf, mesin sedang tidak tersedia." : "Pembayaran belum tersedia. Silakan coba lagi.", true); showView("volume"); });
   }
   window.addEventListener("load", function(){
     var q = new URLSearchParams(location.search), id = q.get("order"); if (!id) return;
     history.replaceState(null, "", location.pathname);
     state.orderId = id;
-    if (q.get("failed")){ report("cancelled"); showToast("Pembayaran tidak berhasil. Silakan coba lagi.", true); return; }
+    var ts = q.get("transaction_status");   // Midtrans adds this when it sends the customer back
+    if (q.get("failed") || (ts && !/^(settlement|capture|pending)$/.test(ts))){ report("cancelled"); showToast("Pembayaran tidak berhasil. Silakan coba lagi.", true); return; }
     overlay("Memeriksa pembayaran\u2026", "Mohon tunggu sebentar.");
     var tries = 0;
     (function check(){
@@ -988,20 +989,20 @@
   function goPaid(){ stopPayCountdown(); resetFillUI(); showView("fill"); }
   function createOrder(){
     state.orderId = null; clearInterval(state.payPoll);
-    if (CFG.payment==="xendit"){ var qc=document.getElementById("qrCanvas"); qc.getContext("2d").clearRect(0,0,qc.width,qc.height); }
+    if (CFG.payment!=="mock"){ var qc=document.getElementById("qrCanvas"); qc.getContext("2d").clearRect(0,0,qc.width,qc.height); }
     post("/api/orders",{kioskId:KIOSK_ID,volume:state.volume,temp:state.temp}).then(function(r){
       if (!r.ok) throw {status:r.status}; return r.json();
     }).then(function(o){
       state.orderId = o.id; document.getElementById("payMeta").textContent += " \u00b7 " + o.id;
       if (o.qr_string) drawRealQR(o.qr_string);
-      if (CFG.payment==="xendit"){   // the server learns about payment from Xendit; we just ask the server
+      if (CFG.payment!=="mock"){   // the server learns about payment from the payment provider; we just ask the server
         state.payPoll = setInterval(function(){
           fetch("/api/orders/"+state.orderId).then(function(r){return r.json();}).then(function(x){ if (x.status==="paid") goPaid(); }).catch(function(){});
         }, 1500);
       }
     }).catch(function(e){
       var na = e && e.status===503;
-      if (CFG.payment==="xendit" || na){ stopPayCountdown(); showToast(na ? "Mohon maaf, mesin sedang tidak tersedia." : "Pembayaran QRIS belum tersedia. Silakan coba lagi.", true); showView("volume"); }
+      if (CFG.payment!=="mock" || na){ stopPayCountdown(); showToast(na ? "Mohon maaf, mesin sedang tidak tersedia." : "Pembayaran QRIS belum tersedia. Silakan coba lagi.", true); showView("volume"); }
     });
   }
   function report(status, ml){
@@ -1081,10 +1082,7 @@
   }
 
   document.getElementById("simPay").addEventListener("click", function(){
-    if (CFG.payment==="xendit"){   // test keys only: ask Xendit to simulate a customer paying; the poll then moves us on
-      if (state.orderId) post("/api/orders/"+state.orderId+"/simulate-pay",{}).catch(function(){});
-      return;
-    }
+    if (CFG.payment!=="mock") return;   // real payments are confirmed by Midtrans, never by this button
     report("paid");
     goPaid();
   });

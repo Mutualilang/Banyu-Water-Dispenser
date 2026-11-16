@@ -63,6 +63,7 @@ h2+.alert,.panel+.panel{margin-top:0}.side{display:grid;gap:18px;align-content:s
  <section class="panel"><h2>Paid orders today</h2><div id="mix"></div></section></div>
 </div></div>
 <script>
+var CLOUD=false;   // true when this page is served by the online (Vercel) copy: read-only machine controls
 var TABS=[["","All"],["completed","Completed"],["stopped","Stopped early"],["attention","Needs attention"],["awaiting_payment","Unpaid"]],tab="";
 var LABEL={awaiting_payment:"Awaiting payment",paid:"Paid",dispensing:"Dispensing",completed:"Completed",stopped:"Stopped early",expired:"Expired",cancelled:"Cancelled"};
 var $=function(i){return document.getElementById(i)},rp=function(n){return"Rp"+n.toLocaleString("id-ID")},esc=function(t){return String(t).replace(/[&<>"]/g,function(c){return"&#"+c.charCodeAt(0)+";"})};
@@ -78,6 +79,7 @@ function renderConn(d){
 
 var CSTATE={cold:"Cold",cool:"Cool",disabled:"Cold off"},hm=function(d){return new Date(d).toLocaleTimeString("en-GB",{hour:"2-digit",minute:"2-digit"})};
 function renderCold(c){
+ if(!c||c.level==null){$("cold").innerHTML='<div class="empty">No data from the machine yet.</div>';return}
  var pct=function(v){return Math.min(100,v/c.capacity*100)},t=c.thresholds,ovr=c.override;
  var msg=c.state==="disabled"?(ovr==="off"?"Cold is switched off by an admin.":"Cold sales paused. Back in about <b>"+c.back_in_min+" min</b>.")
   :c.state==="cool"?"Still colder than room temperature. Fully Cold again in about <b>"+c.cold_again_in_min+" min</b>."
@@ -90,8 +92,9 @@ function renderCold(c){
   +'<div class="scale"><span>0</span><span>off &lt; '+t.lock_below+'</span><span>Cold \u2265 '+t.cold_above+'</span><span>'+c.capacity+'</span></div>'
   +'<div class="note">'+msg+'</div><div class="note">'+since+'</div>'
   +(c.recent.length?'<div class="sub">Last cold sales</div>'+c.recent.map(function(e){return'<div class="alert"><div>'+hm(e.time)+' \u00b7 '+e.ml+' ml<small>'+esc(e.id)+"</small></div></div>"}).join(""):"")
-  +'<div class="sub">Cold sales</div><div class="seg">'+mode("auto","Automatic")+mode("on","Force on")+mode("off","Force off")+"</div>"
-  +'<div class="sub">Tell the estimator about the tank</div><div class="seg"><button data-l="0">Machine just switched on</button><button data-l="'+c.capacity+'">Tank is cold and full</button></div>'
+  +(CLOUD?'<div class="sub">Cold mode: <b>'+({auto:"Automatic",on:"Forced on",off:"Forced off"}[ovr]||ovr)+'</b> \u00b7 change it on the machine\'s own dashboard</div>'
+  :'<div class="sub">Cold sales</div><div class="seg">'+mode("auto","Automatic")+mode("on","Force on")+mode("off","Force off")+"</div>"
+  +'<div class="sub">Tell the estimator about the tank</div><div class="seg"><button data-l="0">Machine just switched on</button><button data-l="'+c.capacity+'">Tank is cold and full</button></div>')
   +'<div class="note">Estimate only (recovers about '+c.recover_ml_per_min+' ml/min). Check it against a thermometer at the outlet.</div>';
 }
 $("cold").onclick=function(e){var b=e.target;
@@ -101,7 +104,16 @@ $("logout").onclick=function(){api("/api/logout","POST").then(function(){locatio
 function load(){
  api("/api/cold").then(renderCold);
  api("/api/dispenser").then(renderConn);
- api("/api/config").then(function(c){var bn=$("banner");bn.hidden=c.payment!=="mock";bn.textContent="Demo payments only: Xendit is not connected ("+c.problem+"). Open settings.env, paste your secret key, then restart the server.";$("modes").innerHTML="Payment: <b>"+c.payment+(c.payment==="xendit"?(c.testMode?" (test money)":" (LIVE)"):"")+"</b> \u00b7 Dispenser: <b>"+c.dispenser+"</b>";
+ api("/api/config").then(function(c){
+  CLOUD=!!c.cloud;$("seed").hidden=$("clear").hidden=CLOUD;
+  var bn=$("banner"),msg="";
+  if(CLOUD&&!c.machine)msg="No data from the machine yet. Check CLOUD_URL and SYNC_SECRET in the machine's settings.env.";
+  else if(CLOUD&&!c.machine.online)msg="The machine has not checked in since "+fmt(c.machine.last_seen)+". It may be off, or its internet is down. Numbers below are from before that.";
+  else if(c.payment==="mock")msg="Demo payments only: Midtrans is not connected ("+(c.problem||"PAYMENT_MODE=mock")+"). Open settings.env on the machine, paste the server key, then restart the server.";
+  bn.hidden=!msg;bn.textContent=msg;
+  var sy=c.sync,syncTxt=!sy?"":!sy.enabled?" \u00b7 Cloud copy: <b>off</b>":sy.last_error?' \u00b7 Cloud copy: <b style="color:var(--danger)">failing</b> ('+esc(sy.last_error)+")":" \u00b7 Cloud copy: <b>"+(sy.pending?sy.pending+" waiting":"up to date")+"</b>";
+  $("modes").innerHTML=(CLOUD?"Online copy \u00b7 machine <b>"+esc(c.machine?c.machine.id:"\u2013")+"</b> "+(c.machine&&c.machine.online?"(checked in "+fmt(c.machine.last_seen)+")":'<b style="color:var(--danger)">OFFLINE</b>')+" \u00b7 ":"")
+   +"Payment: <b>"+(c.payment||"\u2013")+(c.payment==="midtrans"?(c.testMode?" (sandbox, test money)":" (LIVE)"):"")+"</b> \u00b7 Dispenser: <b>"+(c.dispenser||"\u2013")+"</b>"+syncTxt;
   api("/api/dispenser").then(function(d){ if(d.mode==="esp32") $("modes").innerHTML+=" ("+(d.online?"online \u00b7 tank "+d.tank_state+" \u00b7 "+d.job_state:"<b style=\"color:var(--danger)\">OFFLINE</b>")+")"; });
  });
  api("/api/stats").then(function(s){
@@ -113,7 +125,7 @@ function load(){
  });
  api("/api/orders"+(tab?"?status="+tab:"")).then(function(list){
   $("rows").innerHTML=list.map(function(o){return'<tr class="'+(o.attention?"attn":"")+'"><td>'+esc(o.id)+(o.fake?'<span class="tag">sample</span>':"")+"</td><td>"+fmt(o.created_at)+'</td><td class="num">'+o.volume+" ml</td><td>"+(o.temp==="dingin"?"Cold":"Room")+'</td><td class="num">'+Math.round(o.dispensed_ml)+" ml"+(o.qc?'<span class="tag" style="color:var(--danger);border-color:var(--danger)">off '+o.variance_pct+"%</span>":"")+"</td><td class=\"num\">"+rp(o.price)+'</td><td><span class="pill '+o.status+'">'+(o.attention&&o.status==="paid"?"Paid, no water":LABEL[o.status])+"</span></td></tr>"}).join("");
-  $("empty").hidden=list.length>0;$("empty").textContent="No orders here yet. Use the kiosk, or add sample data."});
+  $("empty").hidden=list.length>0;$("empty").textContent=CLOUD?"No orders synced yet.":"No orders here yet. Use the kiosk, or add sample data."});
  api("/api/alerts").then(function(a){
   var open=a.filter(function(x){return!x.resolved});
   $("alerts").innerHTML=open.length?open.map(function(x){return'<div class="alert"><div>'+(x.type==="dispenser_offline"?"Dispenser not responding":"Water is running low")+'<small>'+(x.source==="esp32_sensor"?"Tank sensor":x.source==="server"?"Server":"Reported at the kiosk")+" \u00b7 "+esc(x.kioskId)+" \u00b7 "+fmt(x.timestamp)+'</small></div><button data-r="'+x.id+'">Mark refilled</button></div>'}).join(""):'<div class="empty">No open alerts.</div>'});

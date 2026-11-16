@@ -6,3 +6,4 @@ banyu/settings.env
 banyu/data/
 node_modules/
 .vercel/
+cloud/dist/
