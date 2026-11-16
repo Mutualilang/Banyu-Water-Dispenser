@@ -1,0 +1,8 @@
+# Secrets and local data never go to GitHub
+banyu/settings.env
+.env
+*.env
+!banyu/settings.env.example
+banyu/data/
+node_modules/
+.vercel/

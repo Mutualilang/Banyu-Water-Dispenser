@@ -24,8 +24,8 @@ const CONFIG = {
 // There are no user accounts and no database behind it yet. Anyone who knows one of the keywords gets in.
 // Later this is meant to be replaced by real admin accounts in a database (see README, "Admin login").
 const crypto = require('crypto');
-const KEYWORDS_SET = !!(process.env.ADMIN_KEYWORDS || 'riccibau').trim();
-const ADMIN_KEYWORDS = (process.env.ADMIN_KEYWORDS || 'banyuadmin').split(',').map(k => k.trim()).filter(Boolean);
+const KEYWORDS_SET = !!(process.env.ADMIN_KEYWORDS || '').trim();
+const ADMIN_KEYWORDS = (process.env.ADMIN_KEYWORDS || 'banyu-admin').split(',').map(k => k.trim()).filter(Boolean);
 const sha = x => crypto.createHash('sha256').update(String(x)).digest();
 const KEYWORD_HASHES = ADMIN_KEYWORDS.map(sha);
 const keywordOk = k => KEYWORD_HASHES.map(h => crypto.timingSafeEqual(h, sha(k))).some(Boolean);   // constant-time compare
