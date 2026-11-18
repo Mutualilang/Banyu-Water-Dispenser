@@ -1,6 +1,6 @@
 # Banyu local kiosk + dashboard
 
-This part runs on a computer next to the machine, NOT on Vercel (Vercel only hosts the online copy, see SETUP-ONLINE.md). No npm install. You only need Node 18+ (https://nodejs.org) on one always-on device
+Local prototype v2: everything runs on one laptop next to the machine. No hosting, no npm install. You only need Node 18+ (https://nodejs.org) on one always-on device
 that shares the Wi-Fi with the tablet (an old laptop or mini PC works).
 
 ## Run
@@ -35,13 +35,6 @@ Paying in sandbox: pick QRIS or GoPay on the Midtrans page, then complete the pa
 (see "Testing payments on sandbox" in the Midtrans docs). No real money moves.
 Going live later: production key + `MIDTRANS_ENV=production`, after Midtrans has verified the business. Test one small real payment.
 `MIDTRANS_PAYMENTS` limits the methods offered (e.g. `other_qris,gopay`); empty = all enabled on the account.
-
-## Online copy (dashboard on the website + Discord alerts)
-This computer stays in charge. With `CLOUD_URL` and `SYNC_SECRET` set in settings.env it also sends every order and alert change
-to the website (every 5s, retried until it gets through) plus a heartbeat every minute. If the internet drops, sales keep working
-and the copy catches up afterwards. The online dashboard is read-only for machine settings (cold controls, sample data).
-Setting up the website side: see SETUP-ONLINE.md in the repository root.
-The local dashboard's top line shows "Cloud copy: up to date / N waiting / failing (reason)".
 
 ## Dispenser (ESP32, from API.md)
 - Set ESP32_BASE_URL in settings.env (e.g. http://192.168.31.171). Empty = demo: the tablet fakes the pour.

@@ -1,6 +1,6 @@
 // Banyu local server: zero dependencies, needs only Node 18+.  Run: node server.js
 const http = require('http'), fs = require('fs'), path = require('path');
-// Settings file: put your Midtrans server key (and cloud sync settings) in settings.env (same folder as this file), then restart.
+// Settings file: put your Midtrans server key in settings.env (same folder as this file), then restart.
 for (const f of ['settings.env', '.env']) {
   try { for (const l of fs.readFileSync(path.join(__dirname, f), 'utf8').split(/\r?\n/)) {
     const m = l.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/);
@@ -16,10 +16,6 @@ const CONFIG = {
   MIDTRANS_ENV: (process.env.MIDTRANS_ENV || 'sandbox').toLowerCase() === 'production' ? 'production' : 'sandbox',   // sandbox = test money
   MIDTRANS_PAYMENTS: (process.env.MIDTRANS_PAYMENTS || '').trim(),   // e.g. other_qris,gopay. Empty = every method enabled on your Midtrans account
   // we ask Midtrans about payments ourselves, so no public notification URL is needed
-  // ---- cloud copy (online dashboard + Discord alerts). Empty CLOUD_URL = no syncing, everything stays local ----
-  CLOUD_URL: (process.env.CLOUD_URL || '').trim().replace(/\/+$/, ''),   // e.g. https://banyurefillstation.com
-  SYNC_SECRET: (process.env.SYNC_SECRET || '').trim(),                    // same value as SYNC_SECRET in Vercel
-  MACHINE_ID: (process.env.MACHINE_ID || 'banyu-kiosk-01').trim(),
   DISPENSER_MODE: process.env.DISPENSER_MODE || '',   // '' = automatic: 'esp32' when ESP32_BASE_URL is set, otherwise the tablet fakes the pour
   ESP32_BASE_URL: (process.env.ESP32_BASE_URL || '').replace(/\/+$/, ''),   // e.g. http://192.168.31.171 (set it in settings.env)
 };
@@ -52,6 +48,7 @@ const KEY_PROBLEM = !HAS_KEY ? 'no MIDTRANS_SERVER_KEY found in settings.env'
   : /^SB-Mid-client|^Mid-client/.test(MKEY) ? 'that is the CLIENT key; the SERVER key is needed' : '';
 const KEY_WARNING = !HAS_KEY ? '' : (MKEY.startsWith('SB-') && !MTEST) ? 'this looks like a SANDBOX key but MIDTRANS_ENV=production'
   : (/^Mid-server-/.test(MKEY) && MTEST) ? 'this looks like a PRODUCTION key but MIDTRANS_ENV is sandbox' : '';
+const DEMO_CHOSEN = CONFIG.PAYMENT_MODE === 'mock';   // PAYMENT_MODE=mock in settings.env: demo payments on purpose (presentations)
 if (!CONFIG.PAYMENT_MODE) CONFIG.PAYMENT_MODE = HAS_KEY && !KEY_PROBLEM ? 'midtrans' : 'mock';
 const MT_SNAP = process.env.MIDTRANS_SNAP_BASE || (MTEST ? 'https://app.sandbox.midtrans.com/snap/v1' : 'https://app.midtrans.com/snap/v1');
 const MT_API = process.env.MIDTRANS_API_BASE || (MTEST ? 'https://api.sandbox.midtrans.com/v2' : 'https://api.midtrans.com/v2');
@@ -288,56 +285,6 @@ const schedule = () => { clearTimeout(loopTimer); loopTimer = setTimeout(kick, d
 async function kick() { clearTimeout(loopTimer); await pollDispenser(); schedule(); }   // also called right after every command, so progress shows at once
 kick();
 
-// ===== CLOUD COPY (online dashboard on CLOUD_URL + Discord alerts) =====
-// This computer stays the source of truth. Every 5s we send the orders and alerts that changed since the last
-// successful upload; nothing is marked as sent until the cloud says OK, so an internet outage only delays the copy.
-// Once a minute we also send a heartbeat (dispenser state, cold estimate) so the cloud can tell when this machine goes quiet.
-db.sync = db.sync || { sent: {} };   // "order:ID" / "alert:ID" -> fingerprint of the version the cloud has
-const fp = x => crypto.createHash('sha1').update(JSON.stringify(x)).digest('hex').slice(0, 16);
-const sync = { busy: false, lastOk: null, lastError: null, lastBeat: 0 };
-function syncPending(limit = 100) {
-  const out = [], seen = new Set();
-  for (const [kind, list] of [['order', db.orders], ['alert', db.alerts]]) for (const x of list) {
-    const key = kind + ':' + x.id, h = fp(x); seen.add(key);
-    if (db.sync.sent[key] !== h) out.push({ kind, id: x.id, data: x, h });
-  }
-  for (const key of Object.keys(db.sync.sent)) if (!seen.has(key)) {   // deleted here (e.g. "Clear sample data"): delete in the cloud too
-    const i = key.indexOf(':'); out.push({ kind: key.slice(0, i), id: key.slice(i + 1), data: null, h: null });
-  }
-  return { items: out.slice(0, limit), total: out.length };
-}
-function heartbeat() {
-  return { at: now(), config: { payment: CONFIG.PAYMENT_MODE, testMode: MTEST, problem: KEY_PROBLEM, dispenser: CONFIG.DISPENSER_MODE },
-    cold: coldModel(), dispenser: dispenserInfo(), availability: availability() };
-}
-async function syncNow() {
-  if (!CONFIG.CLOUD_URL || !CONFIG.SYNC_SECRET || sync.busy) return;
-  const { items } = syncPending(), beat = Date.now() - sync.lastBeat >= 60000;
-  if (!items.length && !beat) return;
-  sync.busy = true;
-  try {
-    let r;
-    try { r = await fetch(CONFIG.CLOUD_URL + '/api/ingest', { method: 'POST', signal: AbortSignal.timeout(15000),
-      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + CONFIG.SYNC_SECRET },
-      body: JSON.stringify({ machineId: CONFIG.MACHINE_ID, items: items.map(({ h, ...rest }) => rest), heartbeat: beat ? heartbeat() : undefined }) }); }
-    catch (e) { throw netError(e, CONFIG.CLOUD_URL); }
-    if (!r.ok) { const t = (await r.text()).slice(0, 200);
-      throw new Error(`cloud said ${r.status}${r.status === 401 ? ' (SYNC_SECRET here does not match SYNC_SECRET in Vercel)' : r.status === 404 ? ' (wrong CLOUD_URL, or the cloud part is not deployed)' : ''}: ${t}`); }
-    for (const it of items) { const key = it.kind + ':' + it.id; if (it.data) db.sync.sent[key] = it.h; else delete db.sync.sent[key]; }
-    if (items.length) save();
-    const j = await r.json().catch(() => ({})), c = j.counts;
-    if (c && syncPending(1).total === 0 && (c.orders < db.orders.length || c.alerts < db.alerts.length)) {
-      console.warn(`[cloud sync] the cloud has ${c.orders}/${db.orders.length} orders and ${c.alerts}/${db.alerts.length} alerts: sending everything again`);
-      db.sync.sent = {}; save();
-    }
-    if (beat) sync.lastBeat = Date.now();
-    sync.lastOk = now(); sync.lastError = null;
-  } catch (e) { sync.lastError = e.message; logThrottled('[cloud sync] ' + e.message); }
-  finally { sync.busy = false; }
-}
-const syncInfo = () => ({ enabled: !!(CONFIG.CLOUD_URL && CONFIG.SYNC_SECRET), url: CONFIG.CLOUD_URL || null, last_ok: sync.lastOk, last_error: sync.lastError, pending: syncPending(1e9).total });
-setInterval(syncNow, 5000); setTimeout(syncNow, 1500);
-
 const send = (res, code, body, type = 'application/json') => { res.writeHead(code, { 'Content-Type': type, 'Cache-Control': 'no-store' }); res.end(type === 'application/json' ? JSON.stringify(body) : body); };
 const readBody = req => new Promise(r => { let b = ''; req.on('data', c => b += c); req.on('end', () => { try { r(JSON.parse(b || '{}')); } catch { r({}); } }); });
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.png': 'image/png' };
@@ -365,7 +312,7 @@ http.createServer(async (req, res) => {
   if (p.startsWith('/api/') && !kioskOpen && !isAdmin(req)) return send(res, 401, { error: 'login required' });
   if (p === '/dashboard.html' && !isAdmin(req)) { res.writeHead(302, { Location: '/login.html' }); return res.end(); }
   if (p.startsWith('/api/')) {
-    if (m === 'GET' && p === '/api/config') return send(res, 200, { payment: CONFIG.PAYMENT_MODE, dispenser: CONFIG.DISPENSER_MODE, testMode: MTEST, problem: KEY_PROBLEM, flow: CONFIG.PAYMENT_MODE === 'midtrans' ? 'invoice' : 'mock', sync: syncInfo() });
+    if (m === 'GET' && p === '/api/config') return send(res, 200, { payment: CONFIG.PAYMENT_MODE, dispenser: CONFIG.DISPENSER_MODE, testMode: MTEST, problem: KEY_PROBLEM, demoChosen: DEMO_CHOSEN, flow: CONFIG.PAYMENT_MODE === 'midtrans' ? 'invoice' : 'mock' });
     if (m === 'GET' && p === '/api/cold/public') { const c = coldModel(); return send(res, 200, { state: c.state, enabled: c.enabled, back_in_min: c.enabled ? 0 : Math.max(c.back_in_min, 1) }); }   // the tablet only needs this much
     if (m === 'GET' && p === '/api/cold') return send(res, 200, coldModel());
     if (m === 'POST' && p === '/api/cold/override') {   // admin: 'auto' = follow the estimator, 'on' = never block cold, 'off' = block cold
@@ -451,7 +398,6 @@ http.createServer(async (req, res) => {
   if (CONFIG.PAYMENT_MODE === 'midtrans') console.log(`PAYMENT: Midtrans ${MTEST ? 'SANDBOX (no real money)' : 'PRODUCTION (REAL MONEY)'} | methods: ${CONFIG.MIDTRANS_PAYMENTS || 'all enabled on the account'} | key ${MKEY.slice(0, 10)}...`);
   else console.log(`PAYMENT: DEMO MODE. Midtrans is NOT connected (${KEY_PROBLEM || 'PAYMENT_MODE=mock'}). Edit settings.env and restart.`);
   if (KEY_WARNING) console.warn('PAYMENT WARNING: ' + KEY_WARNING);
-  console.log(CONFIG.CLOUD_URL && CONFIG.SYNC_SECRET ? `CLOUD SYNC: on, to ${CONFIG.CLOUD_URL} as "${CONFIG.MACHINE_ID}"` : `CLOUD SYNC: off (${CONFIG.CLOUD_URL ? 'SYNC_SECRET' : 'CLOUD_URL'} is empty in settings.env). Data stays on this computer only.`);
   console.log(KEYWORDS_SET ? `DASHBOARD LOGIN: ${ADMIN_KEYWORDS.length} keyword(s) accepted (from settings.env)` : 'DASHBOARD LOGIN: WARNING, ADMIN_KEYWORDS is not set in settings.env, so the default keyword "banyu-admin" works. Change it.');
   console.log(`COLD ESTIMATOR: ${COLD.CAP} ml tank, recovers ${COLD.RATE} ml/min, Cold above ${COLD.COLD_ABOVE}, locked below ${COLD.LOCK_BELOW}, back on at ${COLD.REENABLE_AT}`);
   console.log(CONFIG.DISPENSER_MODE === 'esp32' ? `DISPENSER: ESP32 at ${CONFIG.ESP32_BASE_URL} (water-low alert after ${TANK_LOW_MS / 1000}s LOW)` : 'DISPENSER: DEMO MODE (no ESP32_BASE_URL in settings.env): the tablet fakes the pour');

@@ -109,11 +109,11 @@ function load(){
   var bn=$("banner"),msg="";
   if(CLOUD&&!c.machine)msg="No data from the machine yet. Check CLOUD_URL and SYNC_SECRET in the machine's settings.env.";
   else if(CLOUD&&!c.machine.online)msg="The machine has not checked in since "+fmt(c.machine.last_seen)+". It may be off, or its internet is down. Numbers below are from before that.";
-  else if(c.payment==="mock")msg="Demo payments only: Midtrans is not connected ("+(c.problem||"PAYMENT_MODE=mock")+"). Open settings.env on the machine, paste the server key, then restart the server.";
+  else if(c.payment==="mock"&&!c.demoChosen)msg="Demo payments only: Midtrans is not connected ("+(c.problem||"PAYMENT_MODE=mock")+"). Open settings.env on the machine, paste the server key, then restart the server.";
   bn.hidden=!msg;bn.textContent=msg;
   var sy=c.sync,syncTxt=!sy?"":!sy.enabled?" \u00b7 Cloud copy: <b>off</b>":sy.last_error?' \u00b7 Cloud copy: <b style="color:var(--danger)">failing</b> ('+esc(sy.last_error)+")":" \u00b7 Cloud copy: <b>"+(sy.pending?sy.pending+" waiting":"up to date")+"</b>";
   $("modes").innerHTML=(CLOUD?"Online copy \u00b7 machine <b>"+esc(c.machine?c.machine.id:"\u2013")+"</b> "+(c.machine&&c.machine.online?"(checked in "+fmt(c.machine.last_seen)+")":'<b style="color:var(--danger)">OFFLINE</b>')+" \u00b7 ":"")
-   +"Payment: <b>"+(c.payment||"\u2013")+(c.payment==="midtrans"?(c.testMode?" (sandbox, test money)":" (LIVE)"):"")+"</b> \u00b7 Dispenser: <b>"+(c.dispenser||"\u2013")+"</b>"+syncTxt;
+   +"Payment: <b>"+(c.payment||"\u2013")+(c.payment==="midtrans"?(c.testMode?" (sandbox, test money)":" (LIVE)"):c.payment==="mock"?" (demo, no real money)":"")+"</b> \u00b7 Dispenser: <b>"+(c.dispenser||"\u2013")+"</b>"+syncTxt;
   api("/api/dispenser").then(function(d){ if(d.mode==="esp32") $("modes").innerHTML+=" ("+(d.online?"online \u00b7 tank "+d.tank_state+" \u00b7 "+d.job_state:"<b style=\"color:var(--danger)\">OFFLINE</b>")+")"; });
  });
  api("/api/stats").then(function(s){
