@@ -43,12 +43,20 @@ and the copy catches up afterwards. The online dashboard is read-only for machin
 Setting up the website side: see SETUP-ONLINE.md in the repository root.
 The local dashboard's top line shows "Cloud copy: up to date / N waiting / failing (reason)".
 
-## Dispenser (ESP32, from API.md)
-- Set ESP32_BASE_URL in settings.env (e.g. http://192.168.31.171). Empty = demo: the tablet fakes the pour.
+## Dispenser (ESP32)
+- Flash **`firmware/esp32-dispenser/`** (PlatformIO). That folder has the final
+  wiring/pin map (relays 16/17, pumps 26/25, flow 18/4, tank 13), build steps,
+  API reference and calibration. This is the firmware the server talks to.
+- `firmware/banyu-esp32/` is an experimental MQTT prototype with a different
+  (one pump + two valves) pin map; the server does not use MQTT yet. Do not
+  flash it for the kiosk.
+- Set ESP32_BASE_URL in settings.env, e.g. `http://192.168.1.50` or
+  `http://esp32-dispenser.local` (mDNS). Empty = demo: the tablet fakes the pour.
 - The server startup prints "DISPENSER: ESP32 at ..." and later "[dispenser] ONLINE / OFFLINE". This PC must be on the dispenser's Wi-Fi.
-- Only the SERVER talks to the dispenser. Flow: paid -> customer presses Start -> server calls /api/dispense with the order's
-  volume + temperature -> server reads /api/status (1s during a pour, 5s otherwise) -> final ml is saved when the job ends.
-  The device closes the valve by itself at the target. If it refuses (tank low, busy) the order stays "Paid, no water" -> refund.
+- Only the SERVER talks to the dispenser. Flow: paid -> customer presses Start -> server calls
+  `/api/dispense?channel=cold|normal&ml=...` -> server reads `/api/status` (1s during a pour, 5s otherwise)
+  -> final ml is saved when the job ends. The device closes the valve by itself at the target.
+  If it refuses (tank low, busy) the order stays "Paid, no water" -> refund.
 - Stop on the kiosk = pause; "Ya" resumes; "Tidak"/timeout stops. Orders store ordered vs actual ml, seconds taken, and the % difference;
   the dashboard flags completed pours that are off by more than 5%.
 - Alerts: tank LOW for 20s -> one "Water is running low" alert (auto-clears after 20s of NORMAL); no reply for 30s -> "Dispenser not responding".
