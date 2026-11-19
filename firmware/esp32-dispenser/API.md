@@ -518,7 +518,7 @@ Response: `application/json` — the password is never returned, only `has_pass`
 ```
 
 Topics, payloads, command syntax and a dashboard example:
-[`docs/MQTT.md`](docs/MQTT.md). TLS (8883) is supported for cloud brokers; a
+[`MQTT.md`](MQTT.md). TLS (8883) is supported for cloud brokers; a
 custom CA or mutual-TLS client certificate can be uploaded over the local API.
 Remote commands are off by default.
 
@@ -692,5 +692,5 @@ print(r.status_code, r.text)
 - `src/main.cpp` — API routes, status JSON, control logic
 - `include/config.h` — pins, calibration, feature flags
 - `README.md` — wiring, build, OTA, calibration
-- `docs/MQTT.md` — MQTT topics, payloads, commands, dashboard examples
-- `dummy-sensor/` — optional LAN simulator for frontend testing
+- `MQTT.md` — MQTT topics, payloads, commands, dashboard examples
+- `banyu/fake-dispenser.js` (machine repo) — HTTP stand-in for testing without hardware
