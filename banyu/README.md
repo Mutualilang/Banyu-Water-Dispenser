@@ -113,7 +113,7 @@ The stand-in follows the written API, not the real firmware: re-test everything 
 2. Does pumping into the top chamber ever make the dispenser report busy or low in between orders?
 3. Real pour time for 300/600/900 ml with the new valves (90s device timeout). Does /api/sim feed the pour counter?
 4. Does job_ml stay at the final value after a job? Check calibration (ppl) with a measuring cup.
-5. Change the AP password (default 12345678); set a fixed IP for the dispenser in the router; turn on the no-flow safety.
+5. Change the AP/OTA password (default 12345678); set a fixed IP for the dispenser in the router. The no-flow safety is already on in this firmware build.
 6. Is the doc up to date with the firmware (the first readout showed "tank_sensor": false, the doc does not list that field)?
 
 ## Admin login (placeholder)
