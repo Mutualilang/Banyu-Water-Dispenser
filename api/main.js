@@ -122,7 +122,7 @@ async function latestMachine(db) {
   if (!m) return null;
   return { id: m._id, last_seen: m.lastSeen, online: Date.now() - new Date(m.lastSeen) < OFFLINE_MIN * 60000, hb: m.heartbeat || {} };
 }
-const allOrders = async db => (await db.collection('orders').find({}).toArray()).map(d => d.data).filter(Boolean).sort(L.byNewest);
+const allOrders = async (db, machineId) => (await db.collection('orders').find(machineId ? { machineId } : {}).toArray()).map(d => d.data).filter(Boolean).sort(L.byNewest);
 
 async function handler(req, res) {
   const url = new URL(req.url, 'http://x');
@@ -155,19 +155,23 @@ async function handler(req, res) {
       return send(res, 200, mc && !mc.online && d.mode === 'esp32' ? { ...d, online: false } : d);
     }
     if (route === 'stats') {
-      const s = L.stats(await allOrders(db));
-      s.openAlerts = (await db.collection('alerts').find({}).toArray()).filter(a => a.data && !a.data.resolved && !a.ack).length;
+      const mc = await latestMachine(db), mid = mc && mc.id;
+      const s = L.stats(await allOrders(db, mid));
+      const aq = mid ? { machineId: mid } : {};
+      s.openAlerts = (await db.collection('alerts').find(aq).toArray()).filter(a => a.data && !a.data.resolved && !a.ack).length;
       return send(res, 200, s);
     }
-    if (route === 'orders.csv') { res.setHeader('Content-Disposition', 'attachment; filename="banyu-orders.csv"'); return send(res, 200, L.csv(await allOrders(db)), 'text/csv; charset=utf-8'); }
+    if (route === 'orders.csv') { const mc = await latestMachine(db); res.setHeader('Content-Disposition', 'attachment; filename="banyu-orders.csv"'); return send(res, 200, L.csv(await allOrders(db, mc && mc.id)), 'text/csv; charset=utf-8'); }
     if (route === 'orders') {
       const s = url.searchParams.get('status') || (req.query && req.query.status);
-      let list = (await allOrders(db)).map(o => L.withFlags(o));
+      const mc = await latestMachine(db);
+      let list = (await allOrders(db, mc && mc.id)).map(o => L.withFlags(o));
       if (s === 'attention') list = list.filter(o => o.attention); else if (s) list = list.filter(o => o.status === s);
       return send(res, 200, list.slice(0, 200));
     }
     if (route === 'alerts') {
-      const list = (await db.collection('alerts').find({}).toArray()).filter(a => a.data)
+      const mc = await latestMachine(db), mid = mc && mc.id;
+      const list = (await db.collection('alerts').find(mid ? { machineId: mid } : {}).toArray()).filter(a => a.data)
         .map(a => ({ ...a.data, id: a._id, resolved: !!(a.data.resolved || a.ack) })).sort(L.byNewest);
       return send(res, 200, list.slice(0, 50));
     }

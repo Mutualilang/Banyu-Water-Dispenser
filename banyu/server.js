@@ -123,8 +123,22 @@ const TERMINAL = ['completed', 'stopped', 'expired', 'cancelled'];
 const STATUSES = ['awaiting_payment', 'paid', 'dispensing', ...TERMINAL];
 const DB_FILE = path.join(__dirname, 'data', 'db.json');
 fs.mkdirSync(path.join(__dirname, 'data'), { recursive: true });
-let db = fs.existsSync(DB_FILE) ? JSON.parse(fs.readFileSync(DB_FILE, 'utf8')) : { seq: 0, orders: [], alerts: [] };
-const save = () => fs.writeFileSync(DB_FILE, JSON.stringify(db));
+let db = { seq: 0, orders: [], alerts: [] };
+if (fs.existsSync(DB_FILE)) {
+  try { db = JSON.parse(fs.readFileSync(DB_FILE, 'utf8')); }
+  catch (e) {   // a half-written file from an older build: keep it for inspection, start clean
+    const bad = DB_FILE + '.corrupt-' + Date.now();
+    try { fs.renameSync(DB_FILE, bad); } catch { /* leave it */ }
+    console.error(`[db] cannot read ${DB_FILE} (${e.message}); moved it to ${bad} and started empty`);
+  }
+}
+// Write to a temp file and rename, so a power cut cannot leave a half-written db.json.
+const save = () => {
+  const tmp = DB_FILE + '.tmp';
+  fs.writeFileSync(tmp, JSON.stringify(db));
+  try { fs.renameSync(tmp, DB_FILE); }
+  catch (e) { try { fs.rmSync(tmp, { force: true }); } catch { /* ignore */ } throw e; }
+};
 const now = () => new Date().toISOString();
 const pad = (n, l) => String(n).padStart(l, '0');
 const ymd = d => `${d.getFullYear()}${pad(d.getMonth() + 1, 2)}${pad(d.getDate(), 2)}`;
@@ -213,8 +227,12 @@ function seed(n) {
   }
   if (!db.alerts.some(a => a.fake)) db.alerts.push({ id: 'A-demo', type: 'water_shortage', source: 'manual_button', kioskId: 'banyu-kiosk-01', timestamp: now(), resolved: false, fake: true });
 }
+const csvCell = v => {   // keep commas/quotes/newlines inside one Excel column
+  const s = v == null ? '' : String(v);
+  return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+};
 const csv = () => ['id,created_at,kiosk,volume_ml,temp,price_idr,status,dispensed_ml,paid_at,ended_at,payment_id,payment_type,dispenser_ml,duration_s,variance_pct,sample']
-  .concat(db.orders.map(o => [o.id, o.created_at, o.kioskId, o.volume, o.temp, o.price, o.status, o.dispensed_ml, o.paid_at || '', o.ended_at || '', o.payment_id || o.xendit_payment_id || '', o.payment_type || '', o.dispenser_ml ?? '', o.duration_s ?? '', o.variance_pct ?? '', o.fake].join(','))).join('\n');
+  .concat(db.orders.map(o => [o.id, o.created_at, o.kioskId, o.volume, o.temp, o.price, o.status, o.dispensed_ml, o.paid_at || '', o.ended_at || '', o.payment_id || o.xendit_payment_id || '', o.payment_type || '', o.dispenser_ml ?? '', o.duration_s ?? '', o.variance_pct ?? '', o.fake].map(csvCell).join(','))).join('\n');
 
 // ===== DISPENSER (ESP32, see API.md). We ask it for status: every 1s during a pour, every 5s otherwise =====
 const TANK_LOW_MS = (+process.env.TANK_LOW_SECONDS || 20) * 1000, OFFLINE_MS = (+process.env.OFFLINE_SECONDS || 30) * 1000;
