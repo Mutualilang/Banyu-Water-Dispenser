@@ -4,14 +4,9 @@ PlatformIO + Arduino firmware for the **two-line** Banyu dispenser: one cold
 line and one room-temperature line, each with its own relay, pump output and
 flow sensor.
 
-This is the firmware **`banyu/server.js` actually talks to**. It serves the
-local HTTP API the machine server polls and controls. Flash this one for the
-kiosk to work.
-
-> The sibling folder `firmware/banyu-esp32/` is an **experimental MQTT
-> prototype** with a different pin map (one pump + two valves, one flow sensor).
-> The Banyu server does not speak MQTT yet, so the prototype cannot pour. Keep
-> it for the future cloud/MQTT path; use this folder for the machine.
+This is the only firmware in the repository and the one **`banyu/server.js`
+actually talks to**. It serves the local HTTP API the machine server polls and
+controls. Flash this for the kiosk to work.
 
 ## Wiring (final pin map)
 
@@ -157,9 +152,10 @@ The `450` nominal is only a fallback. Trust the measured figure.
 ## Optional MQTT telemetry
 
 The firmware can publish `/api/status` to a broker (Config → MQTT), but it is
-**off by default** and the Banyu server does not use it. Its topic scheme is
-`<base>/<device>/status` and is independent of the experimental
-`firmware/banyu-esp32` MQTT protocol. Leave it off for the kiosk.
+**off by default**. `banyu/server.js` can optionally subscribe to that telemetry
+(see "MQTT telemetry" in `banyu/README.md`); control still goes over the local
+HTTP API. The topic scheme is `<base>/status`, `<base>/event` and
+`<base>/availability`; full reference: [`MQTT.md`](MQTT.md).
 
 ## Notes for this copy
 

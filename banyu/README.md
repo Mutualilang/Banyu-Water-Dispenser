@@ -46,10 +46,8 @@ The local dashboard's top line shows "Cloud copy: up to date / N waiting / faili
 ## Dispenser (ESP32)
 - Flash **`firmware/esp32-dispenser/`** (PlatformIO). That folder has the final
   wiring/pin map (relays 16/17, pumps 26/25, flow 18/4, tank 13), build steps,
-  API reference and calibration. This is the firmware the server talks to.
-- `firmware/banyu-esp32/` is an experimental MQTT prototype with a different
-  (one pump + two valves) pin map; the server does not use MQTT yet. Do not
-  flash it for the kiosk.
+  API reference and calibration. This is the only firmware in the repository
+  and the one the server talks to.
 - Set ESP32_BASE_URL in settings.env, e.g. `http://192.168.1.50` or
   `http://esp32-dispenser.local` (mDNS). Empty = demo: the tablet fakes the pour.
 - The server startup prints "DISPENSER: ESP32 at ..." and later "[dispenser] ONLINE / OFFLINE". This PC must be on the dispenser's Wi-Fi.
