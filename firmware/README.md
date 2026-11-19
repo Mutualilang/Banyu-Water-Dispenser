@@ -7,6 +7,9 @@ sensor per line) and serves the local **HTTP** API `banyu/server.js` uses:
 `/api/status`, `/api/dispense?channel=cold|normal&ml=...`,
 `/api/pause|resume|stop`, plus the web UI, calibration and OTA.
 
+Prebuilt images: **[latest firmware release](https://github.com/Mutualilang/Banyu-Water-Dispenser/releases/latest)**.
+Release/build procedure: [`esp32-dispenser/RELEASING.md`](esp32-dispenser/RELEASING.md).
+
 ## Build and flash
 
 ```bash

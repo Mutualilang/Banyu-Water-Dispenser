@@ -45,6 +45,20 @@ and the copy catches up afterwards. The online dashboard is read-only for machin
 Setting up the website side: see SETUP-ONLINE.md in the repository root.
 The local dashboard's top line shows "Cloud copy: up to date / N waiting / failing (reason)".
 
+## Firmware download
+Prebuilt images: **https://github.com/Mutualilang/Banyu-Water-Dispenser/releases/latest**
+
+- `banyu-esp32-vX.Y.Z.bin` is the **OTA / application image**. On an existing dispenser:
+  web UI -> Firmware -> choose this file -> password `12345678` -> Upload & Reboot.
+- `banyu-esp32-vX.Y.Z-merged.bin` is for the **first USB flash**:
+  `esptool.py --chip esp32 --port COM6 write_flash 0x0 <merged file>`.
+- Every release also has `FLASHING.md` and `SHA256SUMS.txt`.
+
+Do **not** upload the merged image through the web UI; it expects the application image only.
+Releases use the tag `firmware-vX.Y.Z` and the firmware reports itself internally as HydroNode vX.
+This firmware is for the two-line board only. Build/release steps:
+[`firmware/esp32-dispenser/RELEASING.md`](../firmware/esp32-dispenser/RELEASING.md).
+
 ## Dispenser (ESP32)
 - Flash **`firmware/esp32-dispenser/`** (PlatformIO). That folder has the final
   wiring/pin map (relays 16/17, pumps 26/25, flow 18/4, tank 13), build steps,

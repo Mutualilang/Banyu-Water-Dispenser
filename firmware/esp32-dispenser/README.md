@@ -8,6 +8,16 @@ This is the only firmware in the repository and the one **`banyu/server.js`
 actually talks to**. It serves the local HTTP API the machine server polls and
 controls. Flash this for the kiosk to work.
 
+## Prebuilt images
+Download the latest release:
+**https://github.com/Mutualilang/Banyu-Water-Dispenser/releases/latest**
+
+- `banyu-esp32-vX.Y.Z.bin` - OTA / application image (web UI -> Firmware).
+- `banyu-esp32-vX.Y.Z-merged.bin` - first USB flash at `0x0`.
+- `FLASHING.md` and `SHA256SUMS.txt` are attached to each release.
+
+See [`RELEASING.md`](RELEASING.md) for the build and release procedure.
+
 ## Wiring (final pin map)
 
 The pin map lives in [`include/config.h`](include/config.h).
