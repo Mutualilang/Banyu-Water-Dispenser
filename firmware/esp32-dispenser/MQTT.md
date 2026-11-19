@@ -190,8 +190,8 @@ mosquitto_sub -h 192.168.1.10 -t 'banyu/esp32-dispenser-c34c/#' -v
 mosquitto_pub -h 192.168.1.10 -t 'banyu/esp32-dispenser-c34c/cmd' -m 'cold 300'
 ```
 
-A minimal Node.js dashboard consumer (the kiosk server itself does not need
-this; it keeps using HTTP):
+A minimal Node.js dashboard consumer (`banyu/server.js` has its own optional
+read-only bridge; see below):
 
 ```js
 // npm install mqtt
@@ -209,6 +209,22 @@ c.on('message', (topic, payload) => {
 Python (paho-mqtt) works the same way; subscribe to `.../status` for a live
 gauge, `.../availability` to grey out the dashboard when the dispenser is
 offline.
+
+### Banyu machine server bridge
+
+`banyu/server.js` can subscribe to this telemetry as a second status feed.
+Install the one optional package and set in `banyu/settings.env`:
+
+```ini
+MQTT_URL=mqtt://192.168.1.10:1883
+MQTT_USERNAME=...
+MQTT_PASSWORD=...
+MQTT_BASE=banyu/esp32-dispenser-c34c
+```
+
+The server reads `<base>/status`, `<base>/event` and `<base>/availability`
+(read-only), includes the bridge state in `/api/config` and the cloud heartbeat,
+and keeps start/pause/stop on the local HTTP API. Keep `allow_cmd` off.
 
 ## 5. Behaviour and limits
 

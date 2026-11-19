@@ -1,0 +1,8 @@
+{
+  "name": "banyu-machine",
+  "private": true,
+  "description": "Optional MQTT telemetry for banyu/server.js. The base kiosk server still runs with no packages.",
+  "dependencies": {
+    "mqtt": "^5.10.0"
+  }
+}

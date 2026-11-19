@@ -1,7 +1,9 @@
 # Banyu local kiosk + dashboard
 
-This part runs on a computer next to the machine, NOT on Vercel (Vercel only hosts the online copy, see SETUP-ONLINE.md). No npm install. You only need Node 18+ (https://nodejs.org) on one always-on device
-that shares the Wi-Fi with the tablet (an old laptop or mini PC works).
+This part runs on a computer next to the machine, NOT on Vercel (Vercel only hosts the online copy, see SETUP-ONLINE.md).
+The base system needs no npm install. You only need Node 18+ (https://nodejs.org) on one always-on device
+that shares the Wi-Fi with the tablet (an old laptop or mini PC works). The optional MQTT telemetry bridge adds one
+package (see below).
 
 ## Run
     node server.js
@@ -60,6 +62,31 @@ The local dashboard's top line shows "Cloud copy: up to date / N waiting / faili
 - Alerts: tank LOW for 20s -> one "Water is running low" alert (auto-clears after 20s of NORMAL); no reply for 30s -> "Dispenser not responding".
   The kiosk's "Air habis" button still works. Kiosk refuses new orders while the tank is LOW, the dispenser is offline or busy.
 - Kiosk: after 90s untouched on the temperature screen it returns to the start; after 10 minutes idle at the start it reloads.
+
+## MQTT telemetry (optional)
+The dispenser can publish its live status to an MQTT broker (dispenser web UI -> Config -> MQTT). The server can
+subscribe to it as a second status feed. Start/pause/resume/stop still go over the local HTTP API.
+
+1. On the dispenser: enable MQTT, set the broker/port/user/password and note `topic_base` from
+   `http://<dispenser>/api/mqtt` (e.g. `banyu/esp32-dispenser-c34c`). Leave "Accept remote commands" off.
+2. On this computer, install the one optional package once:
+       cd banyu
+       npm install
+3. In settings.env:
+       MQTT_URL=mqtt://192.168.1.10:1883          (use mqtts://host:8883 for TLS)
+       MQTT_USERNAME=...
+       MQTT_PASSWORD=...
+       MQTT_BASE=banyu/esp32-dispenser-c34c
+4. Restart `node server.js`. It prints `MQTT TELEMETRY: on ...`; the dashboard top line shows `MQTT: connected`,
+   and `/api/config` has an `mqtt` block. The cloud heartbeat includes it too.
+
+What it does: subscribes read-only to `<base>/status`, `<base>/event` and `<base>/availability`. A live status
+refreshes the same dispenser state as the HTTP poll and keeps the machine "online" if only HTTP is failing. A
+retained status received on connect is stored but not treated as live, so a stale last value cannot mark an
+offline machine online. If the broker is down, HTTP polling keeps working exactly as before.
+
+Security: give the server a broker user with read-only access to those topics, and use `mqtts://` outside the LAN.
+The server never publishes MQTT commands; remote MQTT commands stay off on the device.
 
 ## Test it with no hardware
     node fake-dispenser.js          (pretend dispenser on http://localhost:8080)

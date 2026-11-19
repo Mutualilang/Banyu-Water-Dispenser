@@ -146,6 +146,7 @@ async function handler(req, res) {
       await runChecks(db).catch(e => console.error('[checks]', e.message));   // opening the dashboard also runs the offline / no-water checks
       const mc = await latestMachine(db), c = (mc && mc.hb.config) || {};
       return send(res, 200, { cloud: true, payment: c.payment, testMode: c.testMode, problem: c.problem, dispenser: c.dispenser,
+        mqtt: (mc && mc.hb.mqtt) || null,
         machine: mc && { id: mc.id, online: mc.online, last_seen: mc.last_seen } });
     }
     if (route === 'cold') { const mc = await latestMachine(db); return send(res, 200, (mc && mc.hb.cold) || {}); }

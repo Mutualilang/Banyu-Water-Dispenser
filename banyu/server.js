@@ -1,4 +1,5 @@
-// Banyu local server: zero dependencies, needs only Node 18+.  Run: node server.js
+// Banyu local server: needs only Node 18+.  Run: node server.js
+// The optional MQTT telemetry bridge loads one package (mqtt); everything else has no dependencies.
 const http = require('http'), fs = require('fs'), path = require('path');
 // Settings file: put your Midtrans server key (and cloud sync settings) in settings.env (same folder as this file), then restart.
 for (const f of ['settings.env', '.env']) {
@@ -22,6 +23,12 @@ const CONFIG = {
   MACHINE_ID: (process.env.MACHINE_ID || 'banyu-kiosk-01').trim(),
   DISPENSER_MODE: process.env.DISPENSER_MODE || '',   // '' = automatic: 'esp32' when ESP32_BASE_URL is set, otherwise the tablet fakes the pour
   ESP32_BASE_URL: (process.env.ESP32_BASE_URL || '').replace(/\/+$/, ''),   // e.g. http://192.168.31.171 (set it in settings.env)
+  // ---- optional MQTT telemetry (read-only; the dispenser publishes it, the server subscribes) ----
+  MQTT_URL: (process.env.MQTT_URL || '').trim(),                              // mqtt://host:1883 or mqtts://host:8883
+  MQTT_USERNAME: (process.env.MQTT_USERNAME || '').trim(),
+  MQTT_PASSWORD: process.env.MQTT_PASSWORD || '',
+  MQTT_BASE: (process.env.MQTT_BASE || '').trim().replace(/\/+$/, ''),        // e.g. banyu/esp32-dispenser-c34c (the device's topic_base)
+  MQTT_CLIENT_ID: (process.env.MQTT_CLIENT_ID || 'banyu-server').trim(),
 };
 // ===== ADMIN LOGIN (placeholder) =====
 // NOTE: for now the dashboard accepts ONLY the keywords listed in ADMIN_KEYWORDS (settings.env, comma separated).
@@ -211,7 +218,7 @@ const csv = () => ['id,created_at,kiosk,volume_ml,temp,price_idr,status,dispense
 
 // ===== DISPENSER (ESP32, see API.md). We ask it for status: every 1s during a pour, every 5s otherwise =====
 const TANK_LOW_MS = (+process.env.TANK_LOW_SECONDS || 20) * 1000, OFFLINE_MS = (+process.env.OFFLINE_SECONDS || 30) * 1000;
-const disp = { online: false, lastOk: Date.now(), status: null, lowSince: 0, okSince: 0 };
+const disp = { online: false, lastOk: Date.now(), status: null, lowSince: 0, okSince: 0, source: null };
 async function esp(p) {
   const r = await fetch(CONFIG.ESP32_BASE_URL + p, { signal: AbortSignal.timeout(3000), cache: 'no-store' });
   return { ok: r.ok, text: (await r.text()).trim() };
@@ -230,6 +237,12 @@ function availability() {   // never sell water we cannot pour
   if (disp.status.tank_low) return { ok: false, reason: 'tank low' };
   if (disp.status.job_active) return { ok: false, reason: 'busy' };
   return { ok: true };
+}
+function applyStatus(st, source) {   // one path for HTTP polling and MQTT telemetry
+  disp.status = st; disp.lastOk = Date.now(); disp.fails = 0; disp.lastErr = null; disp.source = source;
+  if (!disp.online) { disp.online = true; connEvent('online'); }
+  clearAlert('dispenser_offline', 'server');
+  onStatus(st);
 }
 function onStatus(st) {
   const t = Date.now();
@@ -262,7 +275,7 @@ function connEvent(type) {   // keep a diary of every drop, with what the ESP la
 function dispenserInfo() {   // what the dashboards show about the dispenser connection
   const st = disp.status || {};
   return CONFIG.DISPENSER_MODE !== 'esp32' ? { mode: 'mock' } :
-        { mode: 'esp32', online: disp.online, tank_low: !!st.tank_low, tank_state: st.tank_state, job_state: st.job_state, flow_lpm: st.flow_lpm, rssi: st.rssi,
+        { mode: 'esp32', online: disp.online, source: disp.source || null, tank_low: !!st.tank_low, tank_state: st.tank_state, job_state: st.job_state, flow_lpm: st.flow_lpm, rssi: st.rssi,
           wifi: st.wifi_status_name, last_seen_s: Math.round((Date.now() - disp.lastOk) / 1000), last_error: disp.lastErr || null,
           drops_24h: (db.dispenserLog || []).filter(e => e.event === 'offline' && Date.now() - new Date(e.time) < 864e5).length,
           log: (db.dispenserLog || []).slice(-10).reverse() };
@@ -273,20 +286,37 @@ async function pollDispenser() {
   polling = true;
   try {
     const st = JSON.parse((await esp('/api/status')).text);
-    disp.status = st; disp.lastOk = Date.now(); disp.fails = 0; disp.lastErr = null;
-    if (!disp.online) { disp.online = true; connEvent('online'); }
-    clearAlert('dispenser_offline', 'server'); onStatus(st);
+    applyStatus(st, 'http');
   } catch (e) {
     const c = (e.cause && e.cause.code) || e.name; disp.fails = (disp.fails || 0) + 1; disp.lastErr = c;
-    logThrottled(`[dispenser] cannot reach ${CONFIG.ESP32_BASE_URL} (${c}): ${ESP_HINT[c] || 'unknown network problem'}`);
-    if (disp.online && disp.fails >= 2) { disp.online = false; connEvent('offline'); }   // one missed reply is tolerated
-    if (Date.now() - disp.lastOk > OFFLINE_MS) raiseAlert('dispenser_offline', 'server');
+    // MQTT telemetry can be keeping this dispenser fresh while only the HTTP poll is failing.
+    const fresh = Date.now() - disp.lastOk < Math.min(OFFLINE_MS, 12000);
+    if (!fresh) logThrottled(`[dispenser] cannot reach ${CONFIG.ESP32_BASE_URL} (${c}): ${ESP_HINT[c] || 'unknown network problem'}`);
+    if (!fresh && disp.online && disp.fails >= 2) { disp.online = false; connEvent('offline'); }   // one missed reply is tolerated
+    if (!fresh && Date.now() - disp.lastOk > OFFLINE_MS) raiseAlert('dispenser_offline', 'server');
   } finally { polling = false; }
 }
 let loopTimer;
 const schedule = () => { clearTimeout(loopTimer); loopTimer = setTimeout(kick, db.orders.some(o => o.status === 'dispensing') ? 1000 : 5000); };
 async function kick() { clearTimeout(loopTimer); await pollDispenser(); schedule(); }   // also called right after every command, so progress shows at once
 kick();
+
+// ===== MQTT TELEMETRY (optional, read-only) =====
+// The dispenser can publish /api/status to a broker (its Config -> MQTT page). We subscribe to that as a second
+// status feed: it keeps the dispenser state live between HTTP polls and keeps it "online" if only HTTP fails.
+// Commands (start/pause/resume/stop) still use the HTTP API; no command is ever sent over MQTT.
+const { createMqttTelemetry } = require('./mqtt-telemetry');
+const mqttTelemetry = createMqttTelemetry({
+  url: CONFIG.MQTT_URL, username: CONFIG.MQTT_USERNAME, password: CONFIG.MQTT_PASSWORD,
+  base: CONFIG.MQTT_BASE, clientId: `${CONFIG.MQTT_CLIENT_ID}-${CONFIG.MACHINE_ID}`.replace(/[^\w.-]/g, '-').slice(0, 60),
+  log: m => console.log('[mqtt] ' + m),
+  onStatus: (st, meta) => {
+    if (meta && meta.retain) return;   // retained on connect = last known value, not proof the dispenser is alive now
+    applyStatus(st, 'mqtt');
+  },
+  onEvent: (ev) => { if (ev && ev.event === 'tank') console.log(`[mqtt] tank ${ev.state}`); },
+});
+mqttTelemetry.start();
 
 // ===== CLOUD COPY (online dashboard on CLOUD_URL + Discord alerts) =====
 // This computer stays the source of truth. Every 5s we send the orders and alerts that changed since the last
@@ -308,7 +338,7 @@ function syncPending(limit = 100) {
 }
 function heartbeat() {
   return { at: now(), config: { payment: CONFIG.PAYMENT_MODE, testMode: MTEST, problem: KEY_PROBLEM, dispenser: CONFIG.DISPENSER_MODE },
-    cold: coldModel(), dispenser: dispenserInfo(), availability: availability() };
+    cold: coldModel(), dispenser: dispenserInfo(), availability: availability(), mqtt: mqttTelemetry.info() };
 }
 async function syncNow() {
   if (!CONFIG.CLOUD_URL || !CONFIG.SYNC_SECRET || sync.busy) return;
@@ -365,7 +395,7 @@ http.createServer(async (req, res) => {
   if (p.startsWith('/api/') && !kioskOpen && !isAdmin(req)) return send(res, 401, { error: 'login required' });
   if (p === '/dashboard.html' && !isAdmin(req)) { res.writeHead(302, { Location: '/login.html' }); return res.end(); }
   if (p.startsWith('/api/')) {
-    if (m === 'GET' && p === '/api/config') return send(res, 200, { payment: CONFIG.PAYMENT_MODE, dispenser: CONFIG.DISPENSER_MODE, testMode: MTEST, problem: KEY_PROBLEM, flow: CONFIG.PAYMENT_MODE === 'midtrans' ? 'invoice' : 'mock', sync: syncInfo() });
+    if (m === 'GET' && p === '/api/config') return send(res, 200, { payment: CONFIG.PAYMENT_MODE, dispenser: CONFIG.DISPENSER_MODE, testMode: MTEST, problem: KEY_PROBLEM, flow: CONFIG.PAYMENT_MODE === 'midtrans' ? 'invoice' : 'mock', sync: syncInfo(), mqtt: mqttTelemetry.info() });
     if (m === 'GET' && p === '/api/cold/public') { const c = coldModel(); return send(res, 200, { state: c.state, enabled: c.enabled, back_in_min: c.enabled ? 0 : Math.max(c.back_in_min, 1) }); }   // the tablet only needs this much
     if (m === 'GET' && p === '/api/cold') return send(res, 200, coldModel());
     if (m === 'POST' && p === '/api/cold/override') {   // admin: 'auto' = follow the estimator, 'on' = never block cold, 'off' = block cold
@@ -455,4 +485,6 @@ http.createServer(async (req, res) => {
   console.log(KEYWORDS_SET ? `DASHBOARD LOGIN: ${ADMIN_KEYWORDS.length} keyword(s) accepted (from settings.env)` : 'DASHBOARD LOGIN: WARNING, ADMIN_KEYWORDS is not set in settings.env, so the default keyword "banyu-admin" works. Change it.');
   console.log(`COLD ESTIMATOR: ${COLD.CAP} ml tank, recovers ${COLD.RATE} ml/min, Cold above ${COLD.COLD_ABOVE}, locked below ${COLD.LOCK_BELOW}, back on at ${COLD.REENABLE_AT}`);
   console.log(CONFIG.DISPENSER_MODE === 'esp32' ? `DISPENSER: ESP32 at ${CONFIG.ESP32_BASE_URL} (water-low alert after ${TANK_LOW_MS / 1000}s LOW)` : 'DISPENSER: DEMO MODE (no ESP32_BASE_URL in settings.env): the tablet fakes the pour');
+  const mi = mqttTelemetry.info();
+  console.log(mi.enabled ? `MQTT TELEMETRY: on, ${mi.url || 'configured broker'} base ${mi.base}${mi.last_error ? ' - ' + mi.last_error : ' (read-only; control stays HTTP)'}` : 'MQTT TELEMETRY: off (set MQTT_URL and MQTT_BASE in settings.env)');
 });
