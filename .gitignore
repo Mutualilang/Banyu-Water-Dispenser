@@ -7,4 +7,5 @@ banyu/data/
 node_modules/
 .vercel/
 cloud/dist/
+.pio/
 firmware/**/secrets.h
